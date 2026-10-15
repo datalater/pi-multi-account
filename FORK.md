@@ -16,7 +16,7 @@ npm run pack:check
 pi install "$PWD"
 ```
 
-Remove/replace the existing `npm:pi-multi-account@...` declaration in Pi settings first; do not load both copies. Local sources are not replaced by `pi update --extensions`. Dependencies belong to this checkout. Extensions run with the same privileges as Pi.
+Remove/replace the existing `npm:pi-multi-account@...` declaration in Pi settings first; do not load both copies. Local sources are not replaced by `pi update --extensions`. Dependencies belong to this checkout. Pi AI is declared as a host-provided peer, with a development copy for standalone tests. Extensions run with the same privileges as Pi.
 
 Set `"allowCodexCredits": true` in the existing user `provider-failover.json` to opt in; never commit auth, state, live logs, or balances. Completely quit and resume Pi to load changed code. The README documents credit permission and real-refusal safeguards.
 
