@@ -578,6 +578,9 @@ type ProviderFailoverConfig = {
 	invalidCooldownMs?: number;
 	transientCooldownMs?: number;
 	showUsage?: boolean;
+	// Explicit opt-in to spending existing Codex credits after included quota is exhausted.
+	// Never enables purchases or overrides a recorded request-failure cooldown.
+	allowCodexCredits?: boolean;
 	usageRefreshMs?: number;
 	usageStatusRefreshMs?: number;
 	pendingPollMs?: number;
@@ -673,6 +676,7 @@ type RuntimeConfig = Required<
 		| "invalidCooldownMs"
 		| "transientCooldownMs"
 		| "showUsage"
+		| "allowCodexCredits"
 		| "usageRefreshMs"
 		| "usageStatusRefreshMs"
 		| "pendingPollMs"
@@ -1954,6 +1958,7 @@ function normalizeConfig(raw: ProviderFailoverConfig): RuntimeConfig {
 			DEFAULT_TRANSIENT_COOLDOWN_MS,
 		),
 		showUsage: raw.showUsage ?? true,
+		allowCodexCredits: raw.allowCodexCredits === true,
 		usageRefreshMs: positiveOr(raw.usageRefreshMs, DEFAULT_USAGE_REFRESH_MS),
 		usageStatusRefreshMs: positiveOr(
 			raw.usageStatusRefreshMs,
@@ -5385,7 +5390,7 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		// live ceiling and fans it out to sibling slots on the same account; providerRecoveryAt still
 		// reports the real reset from the live snapshot. Never benches an account with headroom
 		// (cooldownMsFromUsage returns 0 while the primary window is < 100%).
-		const blockMs = cooldownMsFromUsage(snapshot);
+		const blockMs = creditAwareUsageCooldown(snapshot);
 		if (blockMs !== undefined && blockMs > 0) {
 			markExhausted(snapshot.provider, blockMs);
 		} else if (blockMs === 0) {
@@ -5798,6 +5803,24 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		);
 	}
 
+	function creditAwareUsageCooldown(snapshot: UsageSnapshot, now = Date.now()): number | undefined {
+		return canSpendCodexCredits(snapshot, now) ? 0 : cooldownMsFromUsage(snapshot, now);
+	}
+
+	function canSpendCodexCredits(snapshot: UsageSnapshot, now = Date.now()): boolean {
+		if (
+			snapshot.family !== "codex" ||
+			!config.allowCodexCredits ||
+			!snapshot.credentialHash ||
+			!usageSnapshotIsCurrent(snapshot) ||
+			usageUntrusted(snapshot.provider, now)
+		) return false;
+		const credits = snapshot.credits;
+		const balance = Number(credits?.balance);
+		return credits?.unlimited === true ||
+			(credits?.hasCredits === true && Number.isFinite(balance) && balance > 0);
+	}
+
 	function providerRecoveryAt(
 		provider: string,
 		now = Date.now(),
@@ -5824,6 +5847,9 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		let at = Math.max(now, exhaustedUntilByProvider.get(provider) ?? now);
 		const cached = usageByProvider.get(provider);
 		if (cached) {
+			// Codex's subscription verdict excludes its credit pool. Credit eligibility bypasses
+			// only that forecast; a recorded failure (including a legacy ambiguous bench) still wins.
+			if (canSpendCodexCredits(cached, now)) return at;
 			const fresh = now - cached.fetchedAt < usageCacheTtl(provider);
 			// The provider's OWN verdict, when it states one, outranks every derived number here —
 			// including a cooldown we recorded ourselves and the distrust we place on a meter that
@@ -5842,7 +5868,7 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 					Math.max(at, now + config.maxRecheckIntervalMs),
 					cached.fetchedAt,
 				);
-			const usageMs = cooldownMsFromUsage(cached, now);
+			const usageMs = creditAwareUsageCooldown(cached, now);
 			// A HARD BLOCK — a usage window at >=100% whose reset is still in the future — is
 			// authoritative ground truth REGARDLESS of snapshot age: a maxed 30-day (or 5h) window
 			// cannot have "un-maxed" itself in the minutes since we last probed, and cooldownMsFromUsage
@@ -5932,7 +5958,7 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 			typeof statedMs === "number" &&
 			statedMs > SESSION_LIMIT_FLOOR_MS &&
 			knownUsage &&
-			cooldownMsFromUsage(knownUsage, now) === 0
+			creditAwareUsageCooldown(knownUsage, now) === 0
 		) {
 			markUsageUntrusted(provider, now);
 		}
@@ -5945,7 +5971,7 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		const snapshot = await refreshUsage(ctx, provider, true);
 		if (snapshot) {
 			applyUsageToCooldown(provider, snapshot, now);
-			const usageMs = cooldownMsFromUsage(snapshot);
+			const usageMs = creditAwareUsageCooldown(snapshot);
 			// Fresh usage is normally ground truth: a maxed long/rolling window must not evict an
 			// account whose short window has already freed.
 			//
@@ -6056,6 +6082,9 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		snapshot: UsageSnapshot,
 		now: number,
 	) {
+		// A balance is not proof that a refused request will succeed. Preserve real cooldowns,
+		// and let legacy forecast-only cooldowns expire rather than guessing their provenance.
+		if (canSpendCodexCredits(snapshot, now)) return;
 		// The account's own verdict settles it in both directions, before any arithmetic on
 		// windows. "Usable" retires the bench AND the distrust: that distrust was recorded about
 		// the METER after a refusal contradicted it, and the account has now answered for itself,
@@ -6080,7 +6109,7 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		}
 		// "Blocked" is the account refusing outright; a window with headroom does not overrule it.
 		if (snapshot.serviceable === false) return;
-		const realMs = cooldownMsFromUsage(snapshot, now);
+		const realMs = creditAwareUsageCooldown(snapshot, now);
 		if (realMs === undefined) return;
 		const recorded = exhaustedUntilByProvider.get(provider) ?? 0;
 		if (realMs <= 0) {

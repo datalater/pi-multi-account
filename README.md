@@ -120,6 +120,8 @@ new `/login` updates `auth.json`.
 
 ## Configuration
 
+This fork's maintenance and local-install workflow is documented in [FORK.md](FORK.md).
+
 A default config is created at `~/.pi/agent/provider-failover.json` on first run. Useful keys:
 
 | Key | Default | Description |
@@ -136,6 +138,7 @@ A default config is created at `~/.pi/agent/provider-failover.json` on first run
 | `providerOrder` | `["anthropic","openai-codex","qwen","ollama"]` | Preferred family order in the rotation. |
 | `cooldownMs` | 6 h | Default cooldown when no reset metadata is provided. |
 | `showUsage` | `true` | Show active Codex/Claude/xAI limits in Pi's footer. |
+| `allowCodexCredits` | `false` | Permit all Codex accounts to attempt requests using a positive recorded credit balance (with `hasCredits`) or unlimited credits after included quota is spent. Requires boolean `true`; restart Pi after editing. |
 | `usageRefreshMs` | 5 min | Per-account usage cache TTL; every authenticated rotation account is refreshed independently, and Anthropic is clamped to at least 10 min to avoid endpoint throttling. |
 | `usageStatusRefreshMs` | 1 min | Re-render the footer and sweep idle sessions for stale usage/model catalogs; network refreshes remain limited by their five-minute (Anthropic: ten-minute) TTLs. |
 | `maxAutoContinuesPerPrompt` | `8` | Cap on auto-resume hops per task. |
@@ -156,6 +159,12 @@ A default config is created at `~/.pi/agent/provider-failover.json` on first run
 | `preferredModels` | `{}` | Optional manual strongest-first override per family; when present it wins over live catalog priority. |
 
 State (cooldowns, invalidations, recent switches, credential-free Codex model catalogs, and a diagnostic pending marker) is persisted to `~/.pi/agent/provider-failover-state.json`. The actual pending task is session-local: one Pi window never consumes or resumes another window's work. Pending work is discarded when its owning session closes.
+
+### Codex credits in this fork
+
+Set `"allowCodexCredits": true` in `provider-failover.json` to use existing credits across all Codex slots. The snapshot must match the current credential. A positive balance may be cached; subscription `allowed: false`, missing spend-control metadata, and snapshot age do not by themselves deny the request. The server remains authoritative and may refuse the attempt. This option does not purchase credits or change billing/automatic-purchase settings.
+
+Real request failures, invalid authentication, and existing provider/model cooldowns still apply. Historical cooldowns are not erased automatically because their provenance is ambiguous. Response headers can omit the full usage endpoint's spend-control fields: the consecutive-message regression test covers that path explicitly.
 
 ### Session model ownership
 

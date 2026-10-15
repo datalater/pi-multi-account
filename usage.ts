@@ -49,6 +49,8 @@ export type UsageSnapshot = {
 		hasCredits?: boolean;
 		unlimited?: boolean;
 		balance?: string;
+		overageLimitReached?: boolean;
+		spendControlReached?: boolean;
 	};
 };
 
@@ -152,6 +154,8 @@ export function parseCodexUsageBody(
 		credits: {
 			hasCredits: typeof credits.has_credits === "boolean" ? credits.has_credits : undefined,
 			unlimited: typeof credits.unlimited === "boolean" ? credits.unlimited : undefined,
+			overageLimitReached: typeof credits.overage_limit_reached === "boolean" ? credits.overage_limit_reached : undefined,
+			spendControlReached: typeof source.spend_control?.reached === "boolean" ? source.spend_control.reached : undefined,
 			balance:
 				typeof credits.balance === "string" || typeof credits.balance === "number"
 					? String(credits.balance)

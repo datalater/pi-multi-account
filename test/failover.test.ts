@@ -5915,7 +5915,11 @@ function hangingCompact(onAbort: () => void) {
 		signal?: AbortSignal,
 	) =>
 		new Promise((_, reject) => {
+			// Real pending network I/O keeps Node alive; a bare Promise does not. The production
+			// watchdog is intentionally unref'ed, so model that lifetime until abort/timeout.
+			const keepAlive = setInterval(() => {}, 1000);
 			const fail = () => {
+				clearInterval(keepAlive);
 				onAbort();
 				const err = new Error("aborted");
 				err.name = "AbortError";
@@ -8107,6 +8111,96 @@ test("a bare throttle with no stated horizon still defers to the usage meter", a
 		"a horizon-free throttle is not evidence that the meter is lying",
 	);
 });
+
+for (const scenario of [
+	{ name: "stale positive balance", credits: { hasCredits: true, balance: "10" }, stale: true, ready: true },
+	{ name: "spend metadata does not veto a real attempt", credits: { hasCredits: true, balance: "10", spendControlReached: true }, ready: true },
+	{ name: "unlimited", credits: { unlimited: true }, ready: true },
+	{ name: "zero balance", credits: { hasCredits: true, balance: "0" }, ready: false },
+	{ name: "invalid balance", credits: { hasCredits: true, balance: "bad" }, ready: false },
+	{ name: "missing balance", credits: { hasCredits: true }, ready: false },
+	{ name: "foreign credential", credits: { hasCredits: true, balance: "10" }, wrongCredential: true, ready: false },
+	{ name: "existing cooldown", credits: { hasCredits: true, balance: "10" }, cooldown: true, ready: false },
+	{ name: "opt-in must be boolean", credits: { hasCredits: true, balance: "10" }, invalidSetting: true, ready: false },
+]) {
+	test(`Codex credit policy: ${scenario.name}`, async () => {
+		const provider = "openai-codex-account-3";
+		const access = codexAccessToken("fixture-workspace", "fixture-user");
+		const now = Date.now();
+		const t = setup({
+			accounts: { ...ONE_ACCOUNT, [provider]: { type: "oauth", access, accountId: "fixture-workspace" } },
+			current: { provider, id: "gpt-5.5" },
+			config: { allowCodexCredits: scenario.invalidSetting ? "false" : true, childProxy: false },
+			seedState: {
+				stateVersion: 5,
+				exhaustedUntilByProvider: scenario.cooldown ? { [provider]: now + 60000 } : {},
+				usageByProvider: { [provider]: {
+					provider, family: "codex", fetchedAt: scenario.stale ? now - 86400000 : now,
+					credentialHash: scenario.wrongCredential ? "wrong-account" : createHash("sha256").update(access).digest("hex").slice(0, 12),
+					serviceable: false, primary: { usedPercent: 100, resetAt: now + 86400000 },
+					credits: scenario.credits,
+				} },
+			},
+		});
+		try {
+			await t.fire("session_start");
+			await t.input("credit readiness");
+			await t.fire("before_agent_start");
+			assert.equal(t.ctx.model.provider === provider, scenario.ready);
+		} finally { await t.fire("session_shutdown"); }
+	});
+}
+
+// Codex credits must keep working after the first reply replaces usage with response headers.
+for (const provider of ["openai-codex", "openai-codex-account-3"]) {
+	for (const allowCodexCredits of [true, false]) {
+		test(`Codex credit preflight: ${provider}, opt-in ${allowCodexCredits}`, async () => {
+			const access = codexAccessToken("fixture-workspace", "fixture-user");
+			const now = Date.now();
+			const t = setup({
+				accounts: { ...ONE_ACCOUNT, [provider]: { type: "oauth", access, accountId: "fixture-workspace" } },
+				current: { provider, id: "gpt-5.5" },
+				config: { allowCodexCredits, childProxy: false },
+				seedState: {
+					stateVersion: 5,
+					usageByProvider: { [provider]: {
+						provider, family: "codex", fetchedAt: now,
+						credentialHash: createHash("sha256").update(access).digest("hex").slice(0, 12),
+						serviceable: false,
+						primary: { usedPercent: 100, resetAt: now + 86400000 },
+						credits: { hasCredits: true, balance: "10" },
+					} },
+				},
+			});
+			try {
+				await t.fire("session_start");
+				await t.input("first message");
+				await t.fire("before_agent_start");
+				if (!allowCodexCredits) {
+					assert.notEqual(t.ctx.model.provider, provider);
+					return;
+				}
+				assert.equal(t.ctx.model.provider, provider);
+				await t.fire("provider_response", { status: 200, headers: {
+					"x-codex-primary-used-percent": "100",
+					"x-codex-primary-reset-after-seconds": "86400",
+					"x-codex-credits-has-credits": "true",
+					"x-codex-credits-balance": "9.5",
+				} });
+				await t.fire("message_end", { message: { role: "assistant", provider, model: "gpt-5.5", stopReason: "stop", content: [] } });
+				await t.input("second message");
+				await t.fire("before_agent_start");
+				assert.equal(t.ctx.model.provider, provider, "response headers lacking spend controls must not evict a credit-bearing account");
+				assert.equal(t.readState().exhaustedUntilByProvider?.[provider], undefined);
+				await finishError(t, provider, "gpt-5.5", "429 insufficient credits");
+				assert.notEqual(t.ctx.model.provider, provider, "an actual refusal must still fail over");
+				assert.ok(t.readState().exhaustedUntilByProvider?.[provider] > Date.now());
+			} finally {
+				await t.fire("session_shutdown");
+			}
+		});
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Manual selection: it must hold, and it must say where it put you

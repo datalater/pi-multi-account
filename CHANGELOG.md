@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased (datalater fork)
+
+- Add default-off `allowCodexCredits` to allow credit-bearing Codex accounts past exhausted subscription forecasts without removing real failure cooldowns.
+- Cover consecutive messages after HTTP response-header usage replaces the full usage snapshot, including base and numbered accounts.
+
 ## [1.22.0] — 2026-09-17
 
 ### Compatibility
