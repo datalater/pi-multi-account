@@ -164,7 +164,8 @@ A default config is created at `~/.pi/agent/provider-failover.json` on first run
 | `childProxy` | `true` | Serve OAuth rotation slots to processes that do not load this extension (a memory extension consolidating its notes, an external CLI, any `pi -p --no-extensions` call) through a loopback route this process owns. A bare child launched without `--model` inherits Pi's **saved global default**, which since Pi 0.84.3 intentionally may differ from this session's live rotation; an explicitly pinned child uses its requested slot. Without a usable publication either form can fail authentication and fall back to whichever provider Pi finds first. The published route carries a non-secret placeholder; the real credential never leaves the parent. |
 | `providerOrder` | `["anthropic","openai-codex","qwen","ollama"]` | Preferred family order in the rotation. |
 | `cooldownMs` | 6 h | Default cooldown when no reset metadata is provided. |
-| `showUsage` | `true` | Show active Codex/Claude/xAI limits in Pi's footer. |
+| `showUsage` | `true` | Enable usage polling and usage UI. |
+| `showUsageStatusline` | `true` | Show the quota footer item. Set `false` when pi-usage owns the statusline; background usage polling and credit-aware routing remain enabled. |
 | `allowCodexCredits` | `false` | Permit all Codex accounts to attempt requests using a positive recorded credit balance (with `hasCredits`) or unlimited credits after included quota is spent. Requires boolean `true`; restart Pi after editing. |
 | `usageRefreshMs` | 5 min | Per-account usage cache TTL; every authenticated rotation account is refreshed independently, and Anthropic is clamped to at least 10 min to avoid endpoint throttling. |
 | `usageStatusRefreshMs` | 1 min | Re-render the footer and sweep idle sessions for stale usage/model catalogs; network refreshes remain limited by their five-minute (Anthropic: ten-minute) TTLs. |
@@ -222,6 +223,16 @@ A failover is only useful if the agent actually keeps working afterward. These g
 ## Privacy & security
 
 `pi-multi-account` reads credentials through Pi and its account store. Account removal, OAuth refresh and parent-owned proxy publication can update the credential files under Pi-compatible locks. Proxy publication keeps a private recovery copy before replacing a credential with a loopback placeholder, and restores the real credential before deleting that copy. Credentials are never stored in rotation state. Account/token values are reduced to a short irreversible SHA-256 fingerprint for re-login detection and deduplication. Credentials are sent only to their own provider endpoints: usage/account probes (`chatgpt.com/backend-api/wham/usage`, `api.anthropic.com/api/oauth/usage`, `cli-chat-proxy.grok.com/v1/billing`, `open.bigmodel.cn/api/monitor/usage/quota/limit` (CN Coding Plan keys only), Ollama Cloud's `/api/me` and `/api/usage`, or Ollama's loopback-only `http://127.0.0.1:11434/api/me` fallback), OpenAI's authenticated `chatgpt.com/backend-api/codex/models` catalog, and provider OAuth token endpoints when Pi's authentication implementation refreshes a login (for xAI, `auth.x.ai/oauth2/token`). Cached state contains percentages, reset times, plan/credit metadata, model metadata, provider-reported account email/alias, and the fingerprint, never the token. Config, state, and the debug log are written with `0600` permissions. The debug log records only provider/model ids, decisions, and truncated reasons — token-shaped material is redacted defensively — Review logs for private project details before sharing an issue. Disable it with `"debugLog": false` or `/multi-account log off`.
+
+## Use one usage statusline
+
+When using the [pi-usage fork](https://github.com/datalater/pi-extensions), keep usage polling enabled but hide this extension's footer in `provider-failover.json`:
+
+```json
+{ "showUsage": true, "showUsageStatusline": false, "allowCodexCredits": true }
+```
+
+This changes presentation only. `/multi-account accounts`, usage refreshes, and failover continue to work. Remove any old `compact-codex-quota.ts` auto-loaded helper as well; pi-usage now displays quota and compact credit balance in a single status item. Fully restart Pi after changing loaded code; use `/multi-account reload` for configuration-only changes.
 
 ## Maintenance and rollback
 

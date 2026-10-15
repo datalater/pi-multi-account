@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased (datalater fork)
 
+- Add `showUsageStatusline` to hide duplicate footer output without disabling usage polling or credit-aware routing.
+
 - Add default-off `allowCodexCredits` to allow credit-bearing Codex accounts past exhausted subscription forecasts without removing real failure cooldowns.
 - Cover consecutive messages after HTTP response-header usage replaces the full usage snapshot, including base and numbered accounts.
 

@@ -578,6 +578,8 @@ type ProviderFailoverConfig = {
 	invalidCooldownMs?: number;
 	transientCooldownMs?: number;
 	showUsage?: boolean;
+	// Hide only the footer when a usage extension owns presentation; polling stays enabled.
+	showUsageStatusline?: boolean;
 	// Explicit opt-in to spending existing Codex credits after included quota is exhausted.
 	// Never enables purchases or overrides a recorded request-failure cooldown.
 	allowCodexCredits?: boolean;
@@ -676,6 +678,7 @@ type RuntimeConfig = Required<
 		| "invalidCooldownMs"
 		| "transientCooldownMs"
 		| "showUsage"
+		| "showUsageStatusline"
 		| "allowCodexCredits"
 		| "usageRefreshMs"
 		| "usageStatusRefreshMs"
@@ -1787,6 +1790,7 @@ const DEFAULT_CONFIG: ProviderFailoverConfig = {
 	invalidCooldownMs: DEFAULT_INVALID_COOLDOWN_MS,
 	transientCooldownMs: DEFAULT_TRANSIENT_COOLDOWN_MS,
 	showUsage: true,
+	showUsageStatusline: true,
 	usageRefreshMs: DEFAULT_USAGE_REFRESH_MS,
 	usageStatusRefreshMs: DEFAULT_USAGE_STATUS_REFRESH_MS,
 	pendingPollMs: PENDING_POLL_MS,
@@ -1958,6 +1962,7 @@ function normalizeConfig(raw: ProviderFailoverConfig): RuntimeConfig {
 			DEFAULT_TRANSIENT_COOLDOWN_MS,
 		),
 		showUsage: raw.showUsage ?? true,
+		showUsageStatusline: raw.showUsageStatusline !== false,
 		allowCodexCredits: raw.allowCodexCredits === true,
 		usageRefreshMs: positiveOr(raw.usageRefreshMs, DEFAULT_USAGE_REFRESH_MS),
 		usageStatusRefreshMs: positiveOr(
@@ -5320,7 +5325,7 @@ export default function piMultiAccount(pi: ExtensionAPI) {
 		// Footer rendering touches host UI + formatting helpers; never let a render hiccup
 		// (theme shape change, formatter edge case) bubble up and break the turn it runs in.
 		try {
-			if (!config.showUsage || !provider || !usageFamily(provider)) {
+			if (!config.showUsage || !config.showUsageStatusline || !provider || !usageFamily(provider)) {
 				ctx.ui.setStatus("multi-account-quota", undefined);
 				return;
 			}

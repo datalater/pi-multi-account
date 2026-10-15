@@ -1092,6 +1092,39 @@ test("Cursor background payloads use the host side-channel session identity", as
 // Usage footer
 // ---------------------------------------------------------------------------
 
+test("hidden usage statusline keeps quota polling and credit-aware routing active", async () => {
+	const provider = "openai-codex-account-3";
+	const access = codexAccessToken("footer-workspace", "footer-user");
+	const originalFetch = globalThis.fetch;
+	let usageRequests = 0;
+	globalThis.fetch = (async (input: string | URL | Request) => {
+		assert.match(String(input), /\/wham\/usage$/);
+		usageRequests++;
+		return Response.json({ rate_limit: { allowed: false, limit_reached: true,
+			primary_window: { used_percent: 100, reset_at: Math.floor(Date.now() / 1000) + 86400 } },
+			credits: { has_credits: true, balance: "43287.15" } });
+	}) as typeof fetch;
+	const t = setup({
+		accounts: { [provider]: { type: "oauth", access, accountId: "footer-workspace" } },
+		current: { provider, id: "gpt-5.5" },
+		config: { showUsage: true, showUsageStatusline: false, allowCodexCredits: true, childProxy: false },
+	});
+	try {
+		await t.fire("session_start");
+		assert.ok(usageRequests > 0, "hiding presentation must not turn off usage polling");
+		assert.equal(t.readState().usageByProvider[provider].credits.balance, "43287.15");
+		await t.input("credit request");
+		await t.fire("before_agent_start");
+		assert.equal(t.ctx.model.provider, provider);
+		assert.equal(t.readState().exhaustedUntilByProvider?.[provider], undefined);
+		assert.ok(t.rec.statuses.some(({ key }) => key === "multi-account-quota"));
+		assert.ok(t.rec.statuses.filter(({ key }) => key === "multi-account-quota").every(({ value }) => value === undefined));
+	} finally {
+		await t.fire("session_shutdown");
+		globalThis.fetch = originalFetch;
+	}
+});
+
 test("usage footer countdown refreshes while the session is idle", async () => {
 	const provider = "openai-codex-account-2";
 	const now = Date.now();
