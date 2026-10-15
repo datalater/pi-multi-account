@@ -1,8 +1,22 @@
-# pi-multi-account
+# pi-multi-account — Datalater Fork
 
-Automatic multi-account failover & rotation for [Pi Agent](https://pi.dev/), across **Anthropic (Claude)**, **OpenAI / ChatGPT Codex**, **Kimi For Coding**, **Cursor**, **Qwen / Alibaba**, and **Ollama**.
+[![Pi extension](https://img.shields.io/badge/Pi-extension-blue)](https://pi.dev) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
 
-When the account you are using hits a quota or rate limit, `pi-multi-account` transparently switches to the next authenticated account/model and (optionally) resumes the interrupted task — so a long agent run does not die just because one account ran out of budget.
+Personal fork of [Sarrius/pi-multi-account](https://github.com/Sarrius/pi-multi-account) with **opt-in Codex credit-backed routing**. A Codex account with credits should not be skipped merely because its included subscription quota is exhausted.
+
+The underlying extension provides automatic account rotation, authentication recovery, and interrupted-task continuation across Anthropic, OpenAI/ChatGPT Codex, Kimi, Cursor, Qwen/Alibaba, and Ollama.
+
+## What this fork changes
+
+- Adds `allowCodexCredits`, disabled by default, to permit existing-credit requests across **all Codex accounts**, not a hand-maintained account list.
+- Keeps a credit-bearing account available after response-header usage replaces the full usage snapshot, including across consecutive messages.
+- Preserves actual request-failure cooldowns, model cooldowns, and authentication checks. Credit permission does not force the server to accept a request.
+- Declares Pi AI as a host-provided peer instead of installing a second production runtime.
+
+This fork owns **request eligibility and failover**, not `/usage`. For numbered-account usage reporting, use the separate [pi-usage fork](https://github.com/datalater/pi-extensions).
+
+> [!IMPORTANT]
+> The upstream npm package `pi-multi-account` does not contain these fork changes. Install the maintained checkout below and do not load it alongside the npm copy.
 
 ## What it does
 
@@ -10,7 +24,7 @@ When the account you are using hits a quota or rate limit, `pi-multi-account` tr
 - **Grows the rotation on login.** Run `/login`, choose **Use a subscription**, then select a numbered slot such as `anthropic-account-3` or `openai-codex-account-5`. The next discovery sweep adds it to the rotation automatically.
 - **Auto-discovers new Codex models per account.** At session start (and on `reload` / `rediscover`) it reads OpenAI's authenticated model catalog, mirrors each account's actually available models onto its Pi alias, and follows OpenAI's server priority. A new flagship can therefore win immediately without an extension release or a hard-coded model id.
 - **Handles auth failures without poisoning healthy OAuth accounts.** A generic final 401 briefly cools down a refreshable account and moves the current task forward. Explicit provider verdicts such as `authentication token has been invalidated` force an early refresh; if the refresh token is dead too, the slot is removed and Pi prints the interactive `/login` recovery steps.
-- **Fails over on quota / rate-limit** (429 / 402 / 403 and friends): the exhausted account goes on cooldown (parsed from the provider's own reset metadata when available) and Pi first tries another account with the same model. If it must leave the family, it preserves the model's quality band — Sol/Opus/other frontier flagships stay frontier; Terra/Sonnet stay balanced; Luna/Haiku stay fast — and keeps the session's thinking level. A fresh provider verdict of `blocked` or 100% is skipped automatically instead of wasting the turn; manual `next` remains an explicit one-attempt override for stale telemetry.
+- **Fails over on quota / rate-limit** (429 / 402 / 403 and friends): the exhausted account goes on cooldown (parsed from the provider's own reset metadata when available) and Pi first tries another account with the same model. If it must leave the family, it preserves the model's quality band — Sol/Opus/other frontier flagships stay frontier; Terra/Sonnet stay balanced; Luna/Haiku stay fast — and keeps the session's thinking level. Quota forecasts normally exclude spent accounts; when `allowCodexCredits` is enabled, a matching positive-credit snapshot can keep a Codex account eligible despite exhausted included quota. Manual `next` remains an explicit one-attempt override for stale telemetry.
 - **Optional auto-continue**: resumes the interrupted turn after a switch from the last safe point. Temporary 5xx/overload errors and Cursor stalls retry the exact selected provider/account/model, without marking its quota exhausted. After four failed attempts (or an earlier recovery breaker), automatic retries stop with an explicit explanation; temporary errors never authorize a switch. Same-route retries are labelled as retries, not fake switches. A failed or cancelled automatic compaction still continues the task instead of leaving the session parked in Working.
 - **Never hides a fresh user message in a private cooldown queue.** If no account is ready, the message remains in Pi's visible transcript and Pi owns its normal delivery/retry path.
 - **Session-bound overnight resume**: if every account is cooling down, the live Pi session waits for the earliest recovery and continues automatically. A new user message, `/multi-account stop`, session exit, or Esc during a running turn cancels the chain.
@@ -18,19 +32,22 @@ When the account you are using hits a quota or rate limit, `pi-multi-account` tr
 - **Keeps YOUR reasoning level across automatic switches.** Whatever the session runs at — your Pi default, `/thinking`, or a per-agent `--thinking low` — is preserved and restored after every account/model switch, so it never drifts downward when a weaker fallback model clamps it. Manual `/model` selections adopt Pi's per-model thinking default in `auto` mode; an explicit CLI `--thinking` or forced `reasoningLevel` remains authoritative. The extension does not otherwise override your level, and extreme levels such as `xhigh` / Max / Ultra are never forced.
 - **Shows live limits for the active account** in Pi's footer: remaining 5-hour/session and weekly allowance plus reset countdowns for Codex, Anthropic, and Ollama Cloud accounts, SuperGrok / xAI subscription credit usage for `/login xai` OAuth (not Cursor Grok, not `XAI_API_KEY`), and GLM Coding Plan CN 5-hour/weekly credit quota for `zai-coding-cn`. GLM CN uses the raw Coding Plan API key only at `https://open.bigmodel.cn/api/monitor/usage/quota/limit`; global `zai` keys are not sent there. Missing or malformed quota is unknown, never assumed unused.
 
-## Install
+## Install this fork
+
+Requires Node.js 22+ and Agent Pi 0.85.1 or newer. Pi supplies the Pi AI runtime; a development copy is used by the standalone tests.
 
 ```bash
-pi install npm:pi-multi-account
+git clone --branch datalater/codex-credits https://github.com/datalater/pi-multi-account.git
+cd pi-multi-account
+npm ci --ignore-scripts
+npm run check
+npm test
+pi install "$PWD"
 ```
 
-Restart Pi or run `/reload` after installation.
+If `settings.json` already lists `npm:pi-multi-account` or a versioned npm entry, **replace it with this local checkout path** rather than loading both. Confirm the source with `pi list`.
 
-Requires Node 22+ and `@earendil-works/pi-ai` 0.78 or newer — it is installed automatically as a
-dependency. Both the pre-0.80 OAuth API and the 0.80+ provider-factory API are supported, so the
-extension keeps working across pi-ai upgrades. If a pi-ai it cannot adapt is ever encountered, the
-extension still loads and API-key accounts keep rotating; only subscription login is unavailable,
-and it says so at session start.
+Fully quit and relaunch/resume Pi after switching loaded code. `pi update --extensions` does not replace this local checkout with the upstream npm release. Extensions run with your user permissions; review the source before installing. If Pi AI's OAuth API cannot be adapted, the extension reports subscription-login unavailability while API-key accounts can continue.
 
 > **Anthropic (Claude Pro/Max) works out of the box.** OAuth login and request
 > shaping for the base `anthropic` provider and every `anthropic-account-*` alias
@@ -45,6 +62,16 @@ Set Pi provider-level retries to zero so the SDK does not keep retrying an exhau
 ```json
 { "retry": { "provider": { "maxRetries": 0 } } }
 ```
+
+## Quick start: use existing Codex credits
+
+Add this field to `~/.pi/agent/provider-failover.json`, preserving your other settings:
+
+```json
+{ "allowCodexCredits": true }
+```
+
+Restart Pi, select the intended Codex account/model, and send a normal message. The option applies to all Codex accounts with a matching positive balance (and `hasCredits`) or unlimited credits. It does not turn on automatic purchases, change billing settings, or erase existing cooldowns. See [Codex credits in this fork](#codex-credits-in-this-fork) for the exact policy and limitations.
 
 ## Usage
 
@@ -143,7 +170,7 @@ A default config is created at `~/.pi/agent/provider-failover.json` on first run
 | `usageStatusRefreshMs` | 1 min | Re-render the footer and sweep idle sessions for stale usage/model catalogs; network refreshes remain limited by their five-minute (Anthropic: ten-minute) TTLs. |
 | `maxAutoContinuesPerPrompt` | `8` | Cap on auto-resume hops per task. |
 | `continuationPrompt` | (built-in) | Template; supports `{from}`, `{to}`, `{reason}`. |
-| `maxRecheckIntervalMs` | `600000` (10 min) | Ceiling on how long a quota snapshot may bench an account before background refresh/re-evaluation. A fresh explicit provider verdict (`serviceable: false`) is authoritative during that interval and is skipped by automatic routing; manual `next` can still spend one deliberate probe. |
+| `maxRecheckIntervalMs` | `600000` (10 min) | Ceiling on how long a quota snapshot may bench an account before background refresh/re-evaluation. A fresh explicit provider verdict (`serviceable: false`) normally blocks automatic routing during that interval, except for eligible Codex credit use; manual `next` can still spend one deliberate probe. |
 | `preserveInterruptedContext` | `true` | Rewrite the turn that triggered the failover into a verbatim `[handoff:interrupted-turn]` record so the account taking over still sees the reasoning, output and tool calls of the turn pi-ai would otherwise drop as unreplayable — including which calls never returned. Deterministic (never moves the prompt-cache breakpoint) and hard-capped. Set to `false` for the previous drop-everything behaviour. |
 | `continueAfterCompaction` | `true` | After an **automatic** compaction, carry the task on instead of ending the run and waiting for the user to type "continue". This covers both Pi's threshold/overflow path (a follow-up is queued while compaction is still in flight so Pi's own `hasQueuedMessages()` route drains it) and the extension's context-guard summary (a real turn starts only from Pi's completion callback, because that guard compacts from an already-idle boundary). One continuation shares the `maxAutoContinuesPerPrompt` budget with failover and is skipped for a manual `/compact`, when Pi is already retrying, when another message/turn is present, and after the user pressed Esc. The message tells the model that finishing is valid. Set `false` only when another installed extension owns post-compaction continuation. |
 | `providerPriority` | managed families, per-token providers last | Where work goes once **every** account of the current provider is spent. An ordered list of provider groups — a managed family, or the base id of anything else you are logged in to (`openrouter`, `zai`, `minimax`…), which `providerOrder` could never name. Three bounds: same-provider failover always runs first and is untouched (588 of 602 automatic failovers in a real black box stayed inside the family — that step already worked); an account on a real cooldown is never chosen over a free one; and a group nobody ranked sorts after every group somebody did. Inside those bounds it settles the hop that used to be arbitrary — the other 14 of those 602 scattered across five destinations with no policy behind them. It sits below the per-account liveness signals on purpose: evidence about one account beats a preference about its category. Set with `/multi-account priority ...`. |
@@ -196,11 +223,14 @@ A failover is only useful if the agent actually keeps working afterward. These g
 
 `pi-multi-account` reads credentials through Pi and its account store. Account removal, OAuth refresh and parent-owned proxy publication can update the credential files under Pi-compatible locks. Proxy publication keeps a private recovery copy before replacing a credential with a loopback placeholder, and restores the real credential before deleting that copy. Credentials are never stored in rotation state. Account/token values are reduced to a short irreversible SHA-256 fingerprint for re-login detection and deduplication. Credentials are sent only to their own provider endpoints: usage/account probes (`chatgpt.com/backend-api/wham/usage`, `api.anthropic.com/api/oauth/usage`, `cli-chat-proxy.grok.com/v1/billing`, `open.bigmodel.cn/api/monitor/usage/quota/limit` (CN Coding Plan keys only), Ollama Cloud's `/api/me` and `/api/usage`, or Ollama's loopback-only `http://127.0.0.1:11434/api/me` fallback), OpenAI's authenticated `chatgpt.com/backend-api/codex/models` catalog, and provider OAuth token endpoints when Pi's authentication implementation refreshes a login (for xAI, `auth.x.ai/oauth2/token`). Cached state contains percentages, reset times, plan/credit metadata, model metadata, provider-reported account email/alias, and the fingerprint, never the token. Config, state, and the debug log are written with `0600` permissions. The debug log records only provider/model ids, decisions, and truncated reasons — token-shaped material is redacted defensively — Review logs for private project details before sharing an issue. Disable it with `"debugLog": false` or `/multi-account log off`.
 
-## License
+## Maintenance and rollback
 
-[MIT](./LICENSE)
+The maintained branch is `datalater/codex-credits`. Use `git rev-parse HEAD` and the source fingerprint in `/multi-account status` to identify the actual fork; the package version remains upstream-compatible.
 
+Run `npm run check`, `npm test`, and `npm run pack:check` before deploying updates. Merge reviewed upstream changes on a separate upgrade branch rather than force-syncing over fork commits. [FORK.md](FORK.md) documents the update procedure, regression coverage, and rollback. Revert code to a known-good commit without restoring credentials or clearing all account state.
 
-### Help make these tools more reliable
+When reporting fork-specific behavior, include the fork commit and Pi version. Remove credentials and private task data before sharing logs. Reproduce upstream behavior without the fork changes before reporting it to the original project.
 
-Use them on real work? Share a reproducible [issue](https://github.com/Sarrius/pi-multi-account/issues), a small regression test, a documentation improvement, or a focused PR. Include Pi/extension versions and expected versus actual behavior; remove credentials and private task data. Shared fixes cover more providers and workflows than one maintainer can test alone.
+## License and attribution
+
+[MIT](./LICENSE). Original functionality is maintained by [Sarrius and upstream contributors](https://github.com/Sarrius/pi-multi-account). This personal fork maintains the credit-aware routing changes; it is not an upstream release.
